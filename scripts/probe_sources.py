@@ -30,6 +30,34 @@ def _run(label, fn):
                 "err": f"{type(e).__name__}: {str(e)[:160]}"}
 
 
+def _tencent_probe():
+    """直接打腾讯批量行情，验证字段位（市值/PE/PB 在第几位）。"""
+    import pandas as pd
+    import requests
+
+    codes = ["sh600519", "sz000651", "sh601398", "sz300750"]
+    r = requests.get("https://qt.gtimg.cn/q=" + ",".join(codes), timeout=12,
+                     headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.qq.com/"})
+    r.encoding = "gbk"
+    rows = []
+    for line in r.text.split(";"):
+        line = line.strip()
+        if not line.startswith("v_") or '="' not in line:
+            continue
+        payload = line.split('="', 1)[1].rstrip('"')
+        f = payload.split("~")
+        rows.append({"code": f[2] if len(f) > 2 else "?", "name": f[1] if len(f) > 1 else "?",
+                     "price": f[3] if len(f) > 3 else "",
+                     "pe_39": f[39] if len(f) > 39 else "",
+                     "circ_44": f[44] if len(f) > 44 else "",
+                     "mcap_45": f[45] if len(f) > 45 else "",
+                     "pb_46": f[46] if len(f) > 46 else "",
+                     "fields": len(f)})
+    df = pd.DataFrame(rows)
+    print("[tencent sample]", rows)
+    return df
+
+
 def main():
     import akshare as ak
 
@@ -38,23 +66,13 @@ def main():
     def add(label, fn):
         cases.append((label, fn))
 
-    add("em/spot 全市场快照", lambda: ak.stock_zh_a_spot_em())
-    add("sina/spot 全市场快照", lambda: ak.stock_zh_a_spot())
-    add("em/hist 600519 日线", lambda: ak.stock_zh_a_hist(
-        symbol="600519", period="daily", start_date="20240101", end_date="20240131", adjust=""))
-    add("sina/daily sh600519", lambda: ak.stock_zh_a_daily(symbol="sh600519", adjust=""))
-    add("tx/hist 600519", lambda: ak.stock_zh_a_hist_tx(symbol="sh600519", start_date="20240101", end_date="20240131"))
-    add("em/individual_info 600519", lambda: ak.stock_individual_info_em(symbol="600519"))
-    add("em/financial_abstract 600519", lambda: ak.stock_financial_abstract(symbol="600519"))
-    add("cninfo/dividend 600519", lambda: ak.stock_dividend_cninfo(symbol="600519"))
-    add("em/board_industry_name", lambda: ak.stock_board_industry_name_em())
-    add("em/index_zh_a_hist 000300", lambda: ak.index_zh_a_hist(
-        symbol="000300", period="daily", start_date="20240101", end_date="20240131"))
+    # --- 第二轮的候选换源方案 ---
+    add("tx/qt 批量行情(自写解析)", lambda: _tencent_probe())
+    add("ak/stock_info_a_code_name", lambda: ak.stock_info_a_code_name())
+    add("sina/sector_spot 行业", lambda: ak.stock_sector_spot(indicator="行业"))
+    add("ths/board_industry_name", lambda: ak.stock_board_industry_name_ths())
     add("sina/index_daily sh000300", lambda: ak.stock_zh_index_daily(symbol="sh000300"))
     add("em/cyq 600519", lambda: ak.stock_cyq_em(symbol="600519", adjust=""))
-    add("baidu/valuation 600519", lambda: ak.stock_zh_valuation_baidu(
-        symbol="600519", indicator="总市值", period="近一年"))
-    add("lg/indicator 600519", lambda: ak.stock_a_indicator_lg(symbol="600519"))
 
     results = []
     ex = ThreadPoolExecutor(max_workers=14)
