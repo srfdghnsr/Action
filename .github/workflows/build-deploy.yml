@@ -35,8 +35,9 @@ jobs:
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
+        continue-on-error: true   # 无 admin 权限时自动开通会失败，不能因此中断抓取
         with:
-          enablement: true       # 仓库未开 Pages 时自动开通（失败则需在 Settings→Pages 手动选 GitHub Actions）
+          enablement: true         # 尝试自动开通；失败需在 Settings→Pages 手动选 GitHub Actions
 
       - name: Install deps
         run: |
