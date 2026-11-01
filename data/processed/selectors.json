@@ -1,0 +1,15 @@
+{
+  "generated_at": "2026-11-01T10:29:29",
+  "params": {
+    "rsi_window": 14,
+    "m250_window": 250,
+    "mcap_min": 5000000000,
+    "mcap_max": 100000000000,
+    "min_listed_days": 3500,
+    "exclude_st": true,
+    "exclude_delisted": true
+  },
+  "total_scanned": 0,
+  "selected_count": 0,
+  "selected": []
+}

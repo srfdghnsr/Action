@@ -1,0 +1,10 @@
+{
+  "generated_at": "2026-11-01T10:29:29",
+  "params": {
+    "min_dividend_years": 3,
+    "cashflow_cover_min": 1.0,
+    "payout_ratio_warn": 1.0
+  },
+  "count": 0,
+  "items": []
+}

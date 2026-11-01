@@ -1,0 +1,9 @@
+{
+  "generated_at": "2026-11-01T10:29:29",
+  "params": {
+    "history_years": 10,
+    "cheap_percentile_min": 0.5
+  },
+  "count": 0,
+  "points": []
+}
