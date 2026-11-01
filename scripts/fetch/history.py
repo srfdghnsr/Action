@@ -50,9 +50,12 @@ def _fetch_em(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
                       start_date=start_date, end_date=end_date, adjust="qfq")
 
 
-def fetch_daily(symbol: str, start_date: str = "20100101",
+def fetch_daily(symbol: str, start_date: str = "19900101",
                 end_date: str = "20500101") -> pd.DataFrame:
-    """日线（前复权），sina → 腾讯 → 东财 三级降级。"""
+    """日线（前复权），sina → 腾讯 → 东财 三级降级。
+
+    默认从 1990 起取全历史：既保证月线序列足够长，也让"上市时间"可由首根 K 线推出。
+    """
     last = None
     for name, fn in (("sina", _fetch_sina), ("tx", _fetch_tx), ("em", _fetch_em)):
         try:
@@ -90,7 +93,7 @@ def to_monthly(daily: pd.DataFrame) -> pd.DataFrame:
     return out[COLUMNS + ["symbol"]]
 
 
-def fetch_hist(symbol: str, period: str = "daily", start_date: str = "20100101",
+def fetch_hist(symbol: str, period: str = "daily", start_date: str = "19900101",
                end_date: str = "20500101") -> pd.DataFrame:
     """兼容旧签名：period=monthly 时返回重采样月线。"""
     daily = fetch_daily(symbol, start_date, end_date)

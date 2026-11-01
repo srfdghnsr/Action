@@ -92,23 +92,37 @@ def fetch_universe_candidates(settings):
     # 优先 watchlist + 候选前段进入 cyq 预算
     cyq_symbols = list(dict.fromkeys(list(watch_set) + list(cand["symbol"].astype(str))))
 
-    def _one(sym):
-        inf = I.fetch_info(sym)
-        d = H.fetch_daily(sym, "20100101")      # 只请求一次日线，月线本地重采样
+    def _one(sym, mcap, circ):
+        """抓单只：日线必需（sina→腾讯→东财），估值/分红/财务为可选增强。"""
+        try:
+            d = H.fetch_daily(sym, "19900101")      # 全历史：月线够长 + 可推上市日
+        except Exception as e:  # noqa: BLE401
+            log.warning("hist %s 失败: %s", sym, e)
+            return I.build_record(sym, None, mcap, circ), False
         H.save(sym, "daily", d)
         H.save(sym, "monthly", H.to_monthly(d))
-        V.save(sym, V.fetch_all(sym))
-        F.save_dividend(sym, F.fetch_dividend(sym))
-        F.save_financial(sym, F.fetch_financial(sym))
-        return inf
+        for label, fn in (
+            ("valuation", lambda: V.save(sym, V.fetch_all(sym))),
+            ("dividend", lambda: F.save_dividend(sym, F.fetch_dividend(sym))),
+            ("financial", lambda: F.save_financial(sym, F.fetch_financial(sym))),
+        ):
+            try:
+                fn()
+            except Exception as e:  # noqa: BLE401
+                log.warning("%s %s 失败（不影响主流程）: %s", label, sym, e)
+        return I.build_record(sym, d, mcap, circ), True
 
     info_records = []
+    hist_ok = 0
     ex = ThreadPoolExecutor(max_workers=workers)
-    futs = {ex.submit(_one, str(r["symbol"])): str(r["symbol"]) for _, r in cand.iterrows()}
+    futs = {ex.submit(_one, str(r["symbol"]), r.get("mcap"), r.get("circ_mcap")): str(r["symbol"])
+            for _, r in cand.iterrows()}
     try:
         for fut in as_completed(futs, timeout=budget):
             try:
-                info_records.append(fut.result())
+                rec, ok = fut.result()
+                info_records.append(rec)
+                hist_ok += 1 if ok else 0
             except Exception as e:  # noqa: BLE001
                 log.warning("候选抓取失败: %s", e)
     except FutTimeout:
@@ -117,8 +131,9 @@ def fetch_universe_candidates(settings):
         ex.shutdown(wait=True, cancel_futures=True)
     I.save(info_records)
     done = len(info_records)
-    if total and done == 0:
-        raise RuntimeError(f"候选 {total} 只全部抓取失败（接口不可达或列名变更），改走兜底")
+    log.info("候选完成 %d / %d（其中日线成功 %d 只）", done, total, hist_ok)
+    if total and hist_ok == 0:
+        raise RuntimeError(f"候选 {total} 只的日线全部抓取失败（接口不可达或列名变更），改走兜底")
 
     # 筹码：仅预算内
     t_cyq = time.time()
