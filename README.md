@@ -142,9 +142,22 @@ python scripts/run_all.py --force    # 忽略交易日校验强制抓取
 
 ## 数据源与局限
 
-- 数据来自 AKShare（东方财富 / 百度股市通 / 新浪）。GitHub runner 在美国，首次真实抓取可能遇到接口或列名变化，`schema_check` 会 fail-fast，按实际返回列微调即可。
-- 筹码接口（`stock_cyq_em` / `stock_cyq_cottle`）较重，仅对候选子集 + watchlist（≤200）运行。
+### 数据源换源说明（重要，勿改回东财全市场快照）
+
+2026-11-01 在 GitHub 美国 runner 上实测（`scripts/probe_sources.py`，结果自动贴成 issue）：
+
+| 接口 | 境外可用性 | 本项目用法 |
+|---|---|---|
+| `stock_zh_a_spot_em`（东财全市场快照） | ❌ `RemoteDisconnected` | **改用腾讯批量行情** `qt.gtimg.cn`（自带总市值/PE/PB） |
+| `stock_board_industry_name_em` / `index_zh_a_hist` | ❌ 同上 | 板块改**同花顺 → 新浪行业**；指数改 `stock_zh_index_daily`(sina) |
+| `stock_zh_a_hist`（东财个股日线） | ⚠️ 偶发断连 | 日线改 **sina `stock_zh_a_daily`(qfq) → 腾讯 → 东财** 三级降级 |
+| 财务摘要 / 分红 / 筹码 / 百度估值 | ✅（偶发抖动） | 保留东财与百度，逐标的 try/except 容错 |
+
+- 月线由日线本地重采样（`history.to_monthly`），每标的只请求一次日线。
+- 腾讯行情字段位（88 字段）：`1=名称 2=代码 3=现价 39=PE 44=流通市值(亿) 45=总市值(亿) 46=PB`。
+- 筹码接口（`stock_cyq_em` / `stock_cyq_cottle`）较重，仅对候选子集 + watchlist（≤200）运行，并受 `cyq_budget_min` 约束。
 - 分红/财务数据存在披露滞后与缺失，缺失字段会降级显示为"—"或标注"数据不足"。
+- 首次真实抓取若失败，工作流会自动开 issue 贴日志尾部，便于排查（`.github/workflows/build-deploy.yml` 的 Report failure 步骤）。
 
 ---
 
