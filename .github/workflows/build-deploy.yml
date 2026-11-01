@@ -18,6 +18,7 @@ permissions:
   contents: write                # 推送 data-cache 分支（兜底数据）
   pages: write
   id-token: write
+  issues: write                  # 抓取失败时把错误日志贴成 issue，便于公开排查
 
 jobs:
   build:
@@ -49,12 +50,30 @@ jobs:
         continue-on-error: true
         timeout-minutes: 72
         run: |
+          set -o pipefail
           ARGS="--push-cache"
           if [ "${{ github.event_name }}" != "schedule" ]; then
             ARGS="$ARGS --force"    # 推送/手动触发一律强制实时抓取（忽视交易日判断）
           fi
           echo "run_all.py $ARGS"
-          python scripts/run_all.py $ARGS
+          python scripts/run_all.py $ARGS 2>&1 | tee /tmp/run.log
+
+      - name: Report failure (issue with log tail)
+        if: steps.run.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let log = '';
+            try { log = fs.readFileSync('/tmp/run.log', 'utf8').slice(-6000); }
+            catch (e) { log = '(日志文件不可读: ' + e.message + ')'; }
+            const stamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '[自动] 抓取失败 ' + stamp + 'Z',
+              body: '工作流抓取/构建失败，以下为日志尾部（最后 6000 字符）：\n\n```\n' + log + '\n```'
+            });
 
       - name: "Fallback: cache snapshot or seed data"
         if: steps.run.outcome == 'failure'
