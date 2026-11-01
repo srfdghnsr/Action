@@ -1,4 +1,4 @@
-# A股全自动看板 (a-share-dashboard)
+# A股全自动看板 (srfdghnsr/Action)
 
 一个**完全托管在 GitHub、每日收盘后自动更新**的 A 股量化研究看板。GitHub Actions 定时抓取行情/财务/筹码数据 → Python 计算四大模块指标与回测 → 生成纯静态 ECharts 深色站点 → 自动部署 GitHub Pages。
 
@@ -91,6 +91,10 @@ python scripts/run_all.py --force    # 忽略交易日校验强制抓取
 | `selector.rsi_window` | 月线 RSI 窗口 | 14 |
 | `selector.m250_window` | 日线均线窗口 | 250 |
 | `cyq.max_symbols` | 筹码分析标的数上限（重接口） | 200 |
+| `pipeline.max_scan` | 单轮扫描候选上限（控制 Actions 时长） | 180（链路确认后可回 600） |
+| `pipeline.workers` | 候选抓取并发线程数 | 6（遇限速降到 4） |
+| `pipeline.time_budget_min` | 候选抓取时间预算，超时优雅收尾并标注"部分数据" | 55 |
+| `pipeline.cyq_budget_min` / `board_budget_min` | 筹码 / 板块各自预算 | 12 / 8 |
 | `backtest.train/valid/holdout_*` | 回测三段划分 | 2015–2020 / 2021–2023 / 2024– |
 | `backtest.min_trades_for_sig` | 判定统计显著的最小样本 | 30 |
 | `schedule.cron_utc` | Actions 定时（UTC） | `30 8 * * 1-5` |
@@ -99,23 +103,31 @@ python scripts/run_all.py --force    # 忽略交易日校验强制抓取
 
 ---
 
-## GitHub 部署（首次）
+## GitHub 部署（已完成，仅记录流程）
 
-1. 在 github.com 新建**公开空仓库** `srfdghnsr/a-share-dashboard`（不要勾选 README）。
-2. 本地推送：
+线上仓库：**https://github.com/srfdghnsr/Action** · 看板地址：**https://srfdghnsr.github.io/Action/**
+
+1. 公开仓库 `srfdghnsr/Action`（建仓时附带 MIT LICENSE）。
+2. 本地推送（若默认 TLS 走不通，加 `git config http.sslBackend openssl`）：
    ```bash
-   git remote add origin https://github.com/srfdghnsr/a-share-dashboard.git
+   git remote add origin https://github.com/srfdghnsr/Action.git
    git branch -M main
+   git fetch origin main && git rebase origin/main   # 保留远端 LICENSE
    git push -u origin main
    ```
-3. 仓库 **Settings → Pages → Source = GitHub Actions**。
-4. 打开 **Actions → build-deploy → Run workflow** 手动触发首次构建；成功后 Pages 地址为
-   `https://srfdghnsr.github.io/a-share-dashboard/`。
+3. Pages：工作流内 `actions/configure-pages` 会尝试自动开通（`enablement: true`）；
+   若被权限拒绝，仓库 **Settings → Pages → Source = GitHub Actions** 手动选一次。
+4. 首次推送即自动触发（`on.push`）；日常可 **Actions → build-deploy → Run workflow** 手动强制抓取
+   （手动触发会带 `--force`，忽略交易日判断）。
 5. 之后每个交易日北京时间 16:30 自动更新（GitHub cron 可能有几分钟延迟）。
 
 ### 失败兜底机制
 
-实时抓取失败时，工作流会自动 `git checkout data-cache -- data/processed` 复用最近一次成功快照重建站点，并在页面顶部显示"数据延迟"横幅，保证 **Pages 始终可访问**。
+实时抓取失败时，工作流按两级兜底，保证 **Pages 始终可访问**：
+
+1. 有 `data-cache` 快照 → `git checkout origin/data-cache -- data/processed` 复用最近一次成功数据重建，
+   页面顶部显示"数据延迟"横幅；
+2. 无快照（首次运行）→ `--seed-mock` 生成示例数据，横幅明示"示例数据（非实时）"，绝不白屏假装成功。
 
 ---
 

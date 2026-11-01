@@ -9,6 +9,14 @@
     "exclude_st": true,
     "exclude_delisted": true
   },
+  "pipeline": {
+    "max_scan": 180,
+    "workers": 6,
+    "time_budget_min": 55,
+    "cyq_budget_min": 12,
+    "board_budget_min": 8,
+    "note": "首轮取 180 只守上限；链路确认后可调回 600。workers 为并发线程数，接口限速时降到 4"
+  },
   "cyq": {
     "max_symbols": 200,
     "concentration_single_peak_max": 10,

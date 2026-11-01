@@ -3,7 +3,12 @@ name: build-deploy
 on:
   schedule:
     - cron: "30 8 * * 1-5"      # 北京时间 16:30（收盘后结算），UTC=08:30，周一至周五
-  workflow_dispatch: {}          # 手动触发
+  workflow_dispatch: {}          # 手动触发（强制实时抓取，忽略交易日判断）
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"                # 首次推送自动跑一次，之后改文档不浪费额度
 
 concurrency:
   group: dashboard-deploy
@@ -28,20 +33,39 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true       # 仓库未开 Pages 时自动开通（失败则需在 Settings→Pages 手动选 GitHub Actions）
+
       - name: Install deps
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Fetch + Compute + Build
         id: run
         continue-on-error: true
-        run: python scripts/run_all.py --push-cache
+        timeout-minutes: 72
+        run: |
+          ARGS="--push-cache"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ARGS="$ARGS --force"
+          fi
+          echo "run_all.py $ARGS"
+          python scripts/run_all.py $ARGS
 
-      - name: Fallback to cache (on failure)
+      - name: "Fallback: cache snapshot or seed data"
         if: steps.run.outcome == 'failure'
         run: |
           git fetch origin data-cache --quiet || true
-          git checkout origin/data-cache -- data/processed 2>/dev/null || true
-          python scripts/run_all.py --use-cache --banner "数据延迟：本次为最近一次成功快照"
+          if git checkout origin/data-cache -- data/processed 2>/dev/null && [ -n "$(ls -A data/processed 2>/dev/null)" ]; then
+            echo "::warning::实时抓取失败，改用 data-cache 最近成功快照重建"
+            python scripts/run_all.py --use-cache --banner "数据延迟：本次为最近一次成功快照"
+          else
+            echo "::warning::实时抓取失败且无缓存快照，改用示例数据保证页面可访问"
+            python scripts/run_all.py --seed-mock
+          fi
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

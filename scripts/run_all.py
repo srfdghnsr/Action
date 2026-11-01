@@ -64,6 +64,14 @@ def fetch_universe_candidates(settings):
     from fetch import cyq as C
     from fetch import board as B
     from io_utils import safe_div
+    import time
+    from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutTimeout
+
+    pipe = settings.get("pipeline", {})
+    workers = max(1, int(pipe.get("workers", 6)))
+    budget = float(pipe.get("time_budget_min", 55)) * 60
+    cyq_budget = float(pipe.get("cyq_budget_min", 12)) * 60
+    board_budget = float(pipe.get("board_budget_min", 8)) * 60
 
     cfg = settings["selector"]
     uni = U.fetch_universe()
@@ -73,9 +81,10 @@ def fetch_universe_candidates(settings):
     uni["mcap"] = uni["mcap"].astype(float)
     cand = uni[(uni["mcap"] > cfg["mcap_min"]) & (uni["mcap"] < cfg["mcap_max"])].copy()
     cand = cand[~cand["name"].astype(str).str.contains("ST|退", na=False)]
-    max_scan = settings.get("pipeline", {}).get("max_scan", 600)
+    max_scan = int(pipe.get("max_scan", 600))
     cand = cand.sort_values("mcap", ascending=False).head(max_scan)
-    log.info("候选 %d 只（市值区间 + 非ST，上限 %d）", len(cand), max_scan)
+    total = len(cand)
+    log.info("候选 %d 只（市值区间 + 非ST，上限 %d，并发 %d）", total, max_scan, workers)
 
     watch = load_json_config("watchlist.json").get("watchlist", [])
     watch_set = set(watch)
@@ -83,25 +92,37 @@ def fetch_universe_candidates(settings):
     # 优先 watchlist + 候选前段进入 cyq 预算
     cyq_symbols = list(dict.fromkeys(list(watch_set) + list(cand["symbol"].astype(str))))
 
+    def _one(sym):
+        inf = I.fetch_info(sym)
+        H.save(sym, "daily", H.fetch_hist(sym, "daily", "20100101"))
+        H.save(sym, "monthly", H.fetch_hist(sym, "monthly", "20100101"))
+        V.save(sym, V.fetch_all(sym))
+        F.save_dividend(sym, F.fetch_dividend(sym))
+        F.save_financial(sym, F.fetch_financial(sym))
+        return inf
+
     info_records = []
-    for _, r in cand.iterrows():
-        sym = str(r["symbol"])
-        try:
-            inf = I.fetch_info(sym)
-            info_records.append(inf)
-            d = H.fetch_hist(sym, "daily", "20100101")
-            H.save(sym, "daily", d)
-            m = H.fetch_hist(sym, "monthly", "20100101")
-            H.save(sym, "monthly", m)
-            V.save(sym, V.fetch_all(sym))
-            F.save_dividend(sym, F.fetch_dividend(sym))
-            F.save_financial(sym, F.fetch_financial(sym))
-        except Exception as e:  # noqa: BLE001
-            log.warning("候选 %s 抓取失败: %s", sym, e)
+    ex = ThreadPoolExecutor(max_workers=workers)
+    futs = {ex.submit(_one, str(r["symbol"])): str(r["symbol"]) for _, r in cand.iterrows()}
+    try:
+        for fut in as_completed(futs, timeout=budget):
+            try:
+                info_records.append(fut.result())
+            except Exception as e:  # noqa: BLE001
+                log.warning("候选抓取失败: %s", e)
+    except FutTimeout:
+        log.warning("候选抓取超出 %.0f 分钟预算，已完成 %d / %d", budget / 60, len(info_records), total)
+    finally:
+        ex.shutdown(wait=True, cancel_futures=True)
     I.save(info_records)
+    done = len(info_records)
 
     # 筹码：仅预算内
+    t_cyq = time.time()
     for i, sym in enumerate(cyq_symbols[:cyq_cap]):
+        if time.time() - t_cyq > cyq_budget:
+            log.warning("筹码预算用完：已完成 %d / %d", i, min(cyq_cap, len(cyq_symbols)))
+            break
         try:
             C.save_cyq(sym, C.fetch_cyq(sym))
             C.save_cottle(sym, C.fetch_cyq_cottle(sym))
@@ -109,10 +130,14 @@ def fetch_universe_candidates(settings):
             log.warning("cyq %s 失败: %s", sym, e)
 
     # 板块
+    t_board = time.time()
     try:
         bl = B.fetch_board_list()
         B.save_board_list(bl)
         for _, br in bl.iterrows():
+            if time.time() - t_board > board_budget:
+                log.warning("板块预算用完，提前收尾")
+                break
             bn = br["board_name"]
             try:
                 B.save_board_cons(bn, B.fetch_board_cons(bn))
@@ -137,6 +162,8 @@ def fetch_universe_candidates(settings):
     except Exception as e:  # noqa: BLE401
         log.warning("基准指数失败: %s", e)
 
+    return done, total
+
 
 def pd_to_month(s):
     import pandas as pd
@@ -144,40 +171,60 @@ def pd_to_month(s):
 
 
 def push_cache():
-    """把 data/processed 推送到 data-cache 分支（兜底数据）。"""
+    """把 data/processed 推到 data-cache 分支（兜底快照）。
+
+    纯 plumbing 实现：临时索引 + read-tree --empty + add --work-tree + write-tree
+    + commit-tree + push sha:refs/heads/data-cache。全程不切换分支、不动主工作树。
+    旧实现用 checkout --orphan + git rm -rf . 再 checkout HEAD，在 Actions 的
+    detached HEAD 下会清空源码树，导致后续 upload-pages-artifact 失败。
+    """
     try:
-        import shutil
+        import tempfile
         repo_root = Path(__file__).resolve().parents[1]
-        dst = repo_root / "data" / "processed"  # 与 Actions 兜底 checkout 路径一致
-        subprocess.run(["git", "config", "user.email", "bot@ashare.local"], check=False)
-        subprocess.run(["git", "config", "user.name", "ashare-bot"], check=False)
-        subprocess.run(["git", "fetch", "origin", "data-cache", "--quiet"], check=False)
-        r = subprocess.run(["git", "rev-parse", "--verify", "data-cache"],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if r.returncode != 0:
-            subprocess.run(["git", "checkout", "--orphan", "data-cache"], check=False)
-            subprocess.run(["git", "rm", "-rf", "."], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        else:
-            subprocess.run(["git", "checkout", "data-cache", "--quiet"],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-        if dst.exists():
-            shutil.rmtree(dst)
-        shutil.copytree(PROCESSED_DIR, dst)
-        subprocess.run(["git", "add", "-A"], check=False)
-        subprocess.run(["git", "commit", "-m", "cache: " + dt.datetime.now().isoformat(timespec="seconds")],
-                       check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["git", "push", "origin", "data-cache", "--force"], check=False,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                               capture_output=True, text=True).stdout.strip() or "main"
-        subprocess.run(["git", "checkout", branch], check=False)
-        log.info("push_cache 完成")
+        rel = "data/processed"
+        if not (repo_root / rel).exists():
+            log.warning("push_cache 跳过：%s 不存在", rel)
+            return
+
+        probe = subprocess.run(["git", "ls-remote", "--heads", "origin", "data-cache"],
+                               cwd=repo_root, capture_output=True, text=True)
+        parent_sha = probe.stdout.split()[0] if probe.stdout.strip() else ""
+
+        def g(args, env=None):
+            return subprocess.run(["git", *args], cwd=repo_root, env=env,
+                                  capture_output=True, text=True)
+
+        msg = "cache: " + dt.datetime.now().isoformat(timespec="seconds")
+        with tempfile.TemporaryDirectory() as tmp:
+            env = dict(os.environ)
+            env.update({
+                "GIT_INDEX_FILE": str(Path(tmp) / "index"),
+                "GIT_WORK_TREE": str(repo_root),
+                "GIT_AUTHOR_NAME": "ashare-bot", "GIT_COMMITTER_NAME": "ashare-bot",
+                "GIT_AUTHOR_EMAIL": "bot@ashare.local", "GIT_COMMITTER_EMAIL": "bot@ashare.local",
+            })
+            if g(["read-tree", "--empty"], env).returncode != 0:
+                raise RuntimeError("read-tree 失败")
+            # 索引为空，-f 忽略 .gitignore，只收 data/processed 这一棵子树
+            r = g(["add", "-A", "-f", "--", rel], env)
+            if r.returncode != 0:
+                raise RuntimeError((r.stderr or "").strip()[:300])
+            tree = g(["write-tree"], env).stdout.strip()
+            if not tree:
+                raise RuntimeError("write-tree 返回空")
+            args = ["commit-tree", tree, "-m", msg]
+            if parent_sha:
+                args = ["commit-tree", tree, "-p", parent_sha, "-m", msg]
+            commit = g(args, env).stdout.strip()
+            if not commit:
+                raise RuntimeError("commit-tree 返回空")
+
+        push = g(["push", "origin", f"{commit}:refs/heads/data-cache", "--force"])
+        if push.returncode != 0:
+            raise RuntimeError((push.stderr or "").strip()[:300])
+        log.info("push_cache 完成: %s", commit[:8])
     except Exception as e:  # noqa: BLE401
         log.warning("push_cache 失败（不影响部署）: %s", e)
-
-
-def PROJECT_PROCESSED():
-    return Path(__file__).resolve().parents[1] / "data" / "processed"
 
 
 def main():
@@ -211,9 +258,13 @@ def main():
         else:
             log.info("== 实时抓取 ==")
             try:
-                fetch_universe_candidates(settings)
+                done, total = fetch_universe_candidates(settings)
                 status, ok = "畅通", True
                 banner = ""
+                if total and done < total:
+                    status = "部分数据"
+                    ok = False
+                    banner = f"数据不完整：本轮完成 {done}/{total} 只（时间预算内提前收尾）"
             except Exception as e:  # noqa: BLE401
                 log.error("实时抓取失败: %s；将由调用方改走 --use-cache", e)
                 raise
