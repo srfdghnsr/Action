@@ -94,8 +94,9 @@ def fetch_universe_candidates(settings):
 
     def _one(sym):
         inf = I.fetch_info(sym)
-        H.save(sym, "daily", H.fetch_hist(sym, "daily", "20100101"))
-        H.save(sym, "monthly", H.fetch_hist(sym, "monthly", "20100101"))
+        d = H.fetch_daily(sym, "20100101")      # 只请求一次日线，月线本地重采样
+        H.save(sym, "daily", d)
+        H.save(sym, "monthly", H.to_monthly(d))
         V.save(sym, V.fetch_all(sym))
         F.save_dividend(sym, F.fetch_dividend(sym))
         F.save_financial(sym, F.fetch_financial(sym))
@@ -141,15 +142,16 @@ def fetch_universe_candidates(settings):
                 log.warning("板块预算用完，提前收尾")
                 break
             bn = br["board_name"]
+            bc = br.get("board_code")
             try:
-                B.save_board_cons(bn, B.fetch_board_cons(bn))
+                B.save_board_cons(bn, B.fetch_board_cons(bn, bc))
                 B.save_board_hist(bn, B.fetch_board_hist(bn))
             except Exception as e:  # noqa: BLE401
                 log.warning("板块 %s 失败: %s", bn, e)
     except Exception as e:  # noqa: BLE401
         log.warning("板块列表失败: %s", e)
 
-    # 基准指数
+    # 基准指数（东财 index_zh_a_hist 境外被断连，改用 sina stock_zh_index_daily）
     try:
         import akshare as ak
         import pandas as pd
@@ -157,10 +159,13 @@ def fetch_universe_candidates(settings):
         bench_dir = RAW_DIR / "benchmark"
         bench_dir.mkdir(parents=True, exist_ok=True)
         for code in settings.get("benchmarks", []):
-            df = ak.index_zh_a_hist(symbol=code, period="monthly", start_date="20100101", end_date="20500101")
-            df = df.rename(columns={"日期": "date", "收盘": "close"})[["date", "close"]]
-            df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m")
+            prefix = "sz" if str(code).startswith("399") else "sh"
+            raw = ak.stock_zh_index_daily(symbol=f"{prefix}{code}")
+            raw["date"] = pd.to_datetime(raw["date"])
+            m = raw.set_index("date")["close"].resample("ME").last().dropna()
+            df = pd.DataFrame({"date": m.index.strftime("%Y-%m"), "close": m.values.round(2)})
             df.to_parquet(bench_dir / f"{code}.parquet", index=False)
+            log.info("基准 %s: %d 个月", code, len(df))
     except Exception as e:  # noqa: BLE401
         log.warning("基准指数失败: %s", e)
 
