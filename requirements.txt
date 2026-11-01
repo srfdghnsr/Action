@@ -1,0 +1,6 @@
+# 固定版本，保证 GitHub Actions 与美国服务器可复现
+akshare==1.18.91
+pandas==2.2.3
+numpy==1.26.4
+pyarrow==17.0.0
+requests==2.32.3

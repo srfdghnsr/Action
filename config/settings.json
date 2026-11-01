@@ -1,0 +1,43 @@
+{
+  "version": "1.0.0",
+  "selector": {
+    "rsi_window": 14,
+    "m250_window": 250,
+    "mcap_min": 5000000000,
+    "mcap_max": 100000000000,
+    "min_listed_days": 3500,
+    "exclude_st": true,
+    "exclude_delisted": true
+  },
+  "cyq": {
+    "max_symbols": 200,
+    "concentration_single_peak_max": 10,
+    "concentration_relatively_max": 15,
+    "concentration_normal_max": 25
+  },
+  "dividend_quality": {
+    "min_dividend_years": 3,
+    "cashflow_cover_min": 1.0,
+    "payout_ratio_warn": 1.0
+  },
+  "valuation": {
+    "history_years": 10,
+    "cheap_percentile_min": 0.5
+  },
+  "backtest": {
+    "train_start": "2015-01-01",
+    "train_end": "2020-12-31",
+    "valid_start": "2021-01-01",
+    "valid_end": "2023-12-31",
+    "holdout_start": "2024-01-01",
+    "rebalance": "M",
+    "top_n": 20,
+    "min_trades_for_sig": 30,
+    "rf": 0.0
+  },
+  "benchmarks": ["000300", "000905"],
+  "schedule": {
+    "cron_utc": "30 8 * * 1-5",
+    "note": "北京时间 16:30（收盘后结算），UTC=08:30，周一至周五"
+  }
+}

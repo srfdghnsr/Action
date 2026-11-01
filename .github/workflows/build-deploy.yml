@@ -1,0 +1,53 @@
+name: build-deploy
+
+on:
+  schedule:
+    - cron: "30 8 * * 1-5"      # 北京时间 16:30（收盘后结算），UTC=08:30，周一至周五
+  workflow_dispatch: {}          # 手动触发
+
+concurrency:
+  group: dashboard-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: write                # 推送 data-cache 分支（兜底数据）
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Fetch + Compute + Build
+        id: run
+        continue-on-error: true
+        run: python scripts/run_all.py --push-cache
+
+      - name: Fallback to cache (on failure)
+        if: steps.run.outcome == 'failure'
+        run: |
+          git fetch origin data-cache --quiet || true
+          git checkout origin/data-cache -- data/processed 2>/dev/null || true
+          python scripts/run_all.py --use-cache --banner "数据延迟：本次为最近一次成功快照"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

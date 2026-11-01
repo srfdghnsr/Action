@@ -1,0 +1,11 @@
+# 中间数据（大文件，不入库；成功时由 Actions 推送到 data-cache 分支）
+data/raw/
+data/processed/
+data/snapshots/
+dist/
+__pycache__/
+*.pyc
+*.parquet
+.env
+secrets.*
+.DS_Store
