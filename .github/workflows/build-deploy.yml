@@ -50,8 +50,8 @@ jobs:
         timeout-minutes: 72
         run: |
           ARGS="--push-cache"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            ARGS="$ARGS --force"
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            ARGS="$ARGS --force"    # 推送/手动触发一律强制实时抓取（忽视交易日判断）
           fi
           echo "run_all.py $ARGS"
           python scripts/run_all.py $ARGS

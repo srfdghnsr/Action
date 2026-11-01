@@ -116,6 +116,8 @@ def fetch_universe_candidates(settings):
         ex.shutdown(wait=True, cancel_futures=True)
     I.save(info_records)
     done = len(info_records)
+    if total and done == 0:
+        raise RuntimeError(f"候选 {total} 只全部抓取失败（接口不可达或列名变更），改走兜底")
 
     # 筹码：仅预算内
     t_cyq = time.time()
@@ -251,7 +253,12 @@ def main():
         status, ok = "数据延迟", False
         banner = args.banner or "数据延迟：本次使用最近一次成功快照"
     else:
-        if not (args.force or is_trade_day()):
+        has_cache = PROCESSED_DIR.exists() and any(PROCESSED_DIR.glob("*.json"))
+        trade_day = args.force or is_trade_day()
+        if not trade_day and not has_cache:
+            log.info("非交易日但无缓存快照 → 改为实时抓取，避免产出空板")
+            trade_day = True
+        if not trade_day:
             log.info("非交易日，复用缓存重建")
             status, ok, banner = "数据延迟", False, "非交易日：复用最近成功快照"
             args.use_cache = True
