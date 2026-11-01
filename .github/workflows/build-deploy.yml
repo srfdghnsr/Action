@@ -9,6 +9,8 @@ on:
     paths-ignore:
       - "**.md"
       - "LICENSE"                # 首次推送自动跑一次，之后改文档不浪费额度
+      - "scripts/probe_sources.py"
+      - ".github/workflows/probe-sources.yml"   # 只改探测器时不重跑主流程
 
 concurrency:
   group: dashboard-deploy
